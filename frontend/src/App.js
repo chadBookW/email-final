@@ -1,29 +1,40 @@
-import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import './App.css';
 import Email from './components/Email';
+import Reply from './components/Reply';
 
-const App = () => {
-  const [emails, setEmails] = useState([]);
+function App() {
+    return (
+        <Router>
+            <div className="App">
+                <h1>Email Manager</h1>
+                <Routes>
+                    <Route path="/" element={<EmailList />} />
+                    <Route path="/reply/:id" element={<Reply />} />
+                </Routes>
+            </div>
+        </Router>
+    );
+}
 
-  useEffect(() => {
-    axios.get('http://localhost:8080/emails')
-      .then(response => {
-        setEmails(response.data);
-      })
-      .catch(error => {
-        console.error('There was an error fetching the emails!', error);
-      });
-  }, []);
+function EmailList() {
+    const [emails, setEmails] = useState([]);
 
-  return (
-    <div className="App">
-      <h1>Email Manager</h1>
-      {emails.map((email, index) => (
-        <Email key={index} email={email} index={index} />
-      ))}
-    </div>
-  );
-};
+    useEffect(() => {
+        fetch('http://localhost:8080/emails')
+            .then(response => response.json())
+            .then(data => setEmails(data))
+            .catch(error => console.error('Error fetching emails:', error));
+    }, []);
+
+    return (
+        <div className="email-container">
+            {emails.map((email, index) => (
+                <Email key={index} email={email} />
+            ))}
+        </div>
+    );
+}
 
 export default App;

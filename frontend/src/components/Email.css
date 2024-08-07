@@ -1,44 +1,45 @@
 .email {
     border: 1px solid #ddd;
+    border-radius: 8px;
     padding: 16px;
     margin: 16px 0;
-    border-radius: 8px;
+    transition: background-color 0.3s ease;
+    cursor: pointer;
+}
+
+.email:hover {
     background-color: #f9f9f9;
 }
 
-.email-subject,
-.email-sender,
-.email-body,
-.email-date,
-.email-sentiment,
-.email-keywords {
-    margin: 8px 0;
+.email-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
 }
 
 .email-subject {
     font-size: 1.2em;
+    margin: 0;
     color: #333;
 }
 
-.email-sender {
-    color: #555;
+.email-from,
+.email-date {
+    font-size: 0.9em;
+    color: #666;
 }
 
 .email-body {
+    margin: 16px 0;
+    font-size: 1em;
     color: #444;
-    line-height: 1.5;
 }
 
-.email-date {
+.email-details {
     font-size: 0.9em;
-    color: #777;
+    color: #666;
 }
 
-.email-sentiment {
-    margin-top: 12px;
-}
-
-.email-keywords {
-    font-style: italic;
-    color: #222;
+.email-details p {
+    margin: 4px 0;
 }
