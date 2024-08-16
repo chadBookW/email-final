@@ -13,7 +13,7 @@ import logging
 import os
 import base64
 from datetime import datetime
-from models import db, Email
+from models import db, Email,DeletedEmail
 
 # Configuration
 GOOGLE_API_KEY = 'AIzaSyCizxQ6wLglJdjErZ5jw1pTiCEj4B9JRP4'
@@ -34,7 +34,8 @@ nlp = spacy.load('en_core_web_sm')
 sentiment_analyzer = SentimentIntensityAnalyzer()
 
 # Gmail API setup
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send']
+
 creds = None
 
 def load_credentials():
@@ -59,10 +60,20 @@ except Exception as e:
     logging.error(f"Failed to create Gmail service: {e}")
     service = None
 
+from datetime import datetime
+
+from datetime import datetime
+import logging
+import base64
+
+from datetime import datetime, timezone
+
 def fetch_emails():
     emails = []
     next_page_token = None
     try:
+        deleted_ids = {email.id for email in DeletedEmail.query.all()}
+
         while True:
             results = service.users().messages().list(
                 userId='me', 
@@ -70,47 +81,90 @@ def fetch_emails():
                 maxResults=10,
                 pageToken=next_page_token
             ).execute()
-            
+
             messages = results.get('messages', [])
             next_page_token = results.get('nextPageToken')
 
             for msg in messages:
-                msg_data = service.users().messages().get(userId='me', id=msg['id']).execute()
+                msg_id = msg['id']
+
+                # Skip if email was previously deleted
+                if msg_id in deleted_ids:
+                    continue
+
+                msg_data = service.users().messages().get(userId='me', id=msg_id).execute()
 
                 msg_headers = {header['name']: header['value'] for header in msg_data['payload']['headers']}
                 subject = msg_headers.get('Subject', 'No Subject')
                 sender = msg_headers.get('From', 'Unknown Sender')
                 date = msg_headers.get('Date', '')
 
-                # Convert date to a datetime object
-                email_date = datetime.strptime(date, '%a, %d %b %Y %H:%M:%S %z').astimezone()
+                # Handle date formats and make it timezone-aware
+                if 'GMT' in date:
+                    date = date.replace(' GMT', '')
+                    email_date = datetime.strptime(date, '%a, %d %b %Y %H:%M:%S')
+                    email_date = email_date.replace(tzinfo=timezone.utc)  # Make it timezone-aware
+                else:
+                    email_date = datetime.strptime(date, '%a, %d %b %Y %H:%M:%S %z')
+
+                email_date_iso = email_date.isoformat()
 
                 # Decode the email body
-                body_data = msg_data['payload'].get('body', {}).get('data', '')
-                if body_data:
+                body = ''
+                if 'data' in msg_data['payload'].get('body', {}):
+                    body_data = msg_data['payload']['body']['data']
                     body = base64.urlsafe_b64decode(body_data.encode('UTF-8')).decode('UTF-8')
                 else:
-                    body = 'No body content'
+                    parts = msg_data['payload'].get('parts', [])
+                    for part in parts:
+                        if part['mimeType'] == 'text/plain' and 'data' in part['body']:
+                            body = base64.urlsafe_b64decode(part['body']['data'].encode('UTF-8')).decode('UTF-8')
+                            break
 
-                # Check if the email already exists in the database
-                if not Email.query.filter_by(subject=subject, date=email_date, sender=sender).first():
-                    email = Email(
-                        subject=subject,
-                        body=body,
-                        sender=sender,
-                        date=email_date
-                    )
-                    emails.append(email)
-                    db.session.add(email)
+                # Add email to the list for sorting
+                emails.append({
+                    'id': msg_id,
+                    'subject': subject,
+                    'date': email_date,
+                    'sender': sender,
+                    'body': body,
+                })
 
             if not next_page_token:
                 break
+
+        # Sort emails by date in descending order
+        emails.sort(key=lambda x: x['date'], reverse=True)
+
+        # Add sorted emails to the database
+        for email in emails:
+            if not Email.query.filter_by(id=email['id']).first():
+                email_record = Email(
+                    id=email['id'],
+                    subject=email['subject'],
+                    date=email['date'].isoformat(),
+                    sender=email['sender'],
+                    body=email['body'],
+                    sentiment_pos=0.0,
+                    sentiment_neg=0.0,
+                    sentiment_neu=0.0,
+                    keywords=""
+                )
+                db.session.add(email_record)
 
         db.session.commit()
 
     except Exception as e:
         logging.error(f"Failed to fetch emails: {e}")
+    
     return emails
+
+
+
+
+
+
+
 
 def analyze_email(email):
     try:
@@ -175,21 +229,58 @@ def delete_emails():
         logging.error(f"Error deleting emails: {e}")
         return jsonify({'status': 'error', 'message': f'Failed to delete emails: {str(e)}'}), 500
 
+
 @app.route('/generate_reply', methods=['POST'])
 def generate_reply():
     email_body = request.json.get('body')
-    prompt = f"Given the following email body:\n\n{email_body}\n\nCompose a professional and appropriate reply."
+    prompt = f"Given the following email body:\n\n{email_body}\n\nCompose a professional and appropriate reply. Provide both a subject and body."
 
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
 
-        # Access the text content of the generated response
-        reply = response.text
+        # Assume response contains two parts: a subject and a body
+        subject, body = response.text.split("\n", 1)  # Assuming LLM generates the subject on the first line
+        
+        # Remove unwanted prefixes (e.g., '## Subject: Re:')
+        if subject.lower().startswith("## subject: re:"):
+            subject = subject[15:].strip()
+        elif subject.lower().startswith("## subject:"):
+            subject = subject[11:].strip()
 
-        return jsonify({'reply': reply.strip()})
+        return jsonify({
+            'subject': subject.strip(),
+            'body': body.strip()
+        })
     except Exception as e:
-        return jsonify({'reply': f'An error occurred: {str(e)}'}), 500
+        return jsonify({'error': f'An error occurred: {str(e)}'}), 500
+
+
+@app.route('/send_email', methods=['POST'])
+def send_email():
+    try:
+        email_data = request.json
+        recipient = email_data['recipient']
+        subject = email_data['subject']
+        body_text = email_data['body']
+
+        # Create the email message
+        message = f"To: {recipient}\r\nSubject: {subject}\r\n\r\n{body_text}"
+        encoded_message = base64.urlsafe_b64encode(message.encode("utf-8")).decode("utf-8")
+
+        # Create the message payload
+        send_message = {
+            'raw': encoded_message
+        }
+
+        # Send the email
+        service.users().messages().send(userId='me', body=send_message).execute()
+
+        return jsonify({'status': 'success', 'message': 'Email sent successfully!'})
+    except Exception as e:
+        logging.error(f"Error sending email: {e}")
+        return jsonify({'status': 'error', 'message': f'Failed to send email: {str(e)}'}), 500
+
 
 if __name__ == '__main__':
     with app.app_context():

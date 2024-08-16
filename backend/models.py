@@ -5,7 +5,7 @@ db = SQLAlchemy()
 class Email(db.Model):
     id = db.Column(db.String, primary_key=True)
     subject = db.Column(db.String, nullable=True)
-    date = db.Column(db.String, nullable=True)
+    date = db.Column(db.String, nullable=True)  # ISO format date
     sender = db.Column(db.String, nullable=True)
     body = db.Column(db.Text, nullable=True)
     sentiment_pos = db.Column(db.Float, nullable=True)
@@ -13,7 +13,7 @@ class Email(db.Model):
     sentiment_neu = db.Column(db.Float, nullable=True)
     keywords = db.Column(db.String, nullable=True)
 
-    def __init__(self, id, subject, date, sender, body, sentiment_pos, sentiment_neg, sentiment_neu, keywords):
+    def __init__(self, id, subject, date, sender, body, sentiment_pos=0.0, sentiment_neg=0.0, sentiment_neu=0.0, keywords=""):
         self.id = id
         self.subject = subject
         self.date = date
@@ -41,3 +41,13 @@ class Email(db.Model):
             },
             'keywords': self.keywords.split(',') if self.keywords else []
         }
+
+
+class DeletedEmail(db.Model):
+    id = db.Column(db.String, primary_key=True)
+
+    def __init__(self, id):
+        self.id = id
+
+    def __repr__(self):
+        return f'<DeletedEmail {self.id}>'

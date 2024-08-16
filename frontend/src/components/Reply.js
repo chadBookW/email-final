@@ -6,14 +6,18 @@ import axios from 'axios';
 function Reply() {
     const location = useLocation();
     const { email } = location.state;
-    const [reply, setReply] = useState('');
+    const [replyBody, setReplyBody] = useState('');
+    const [replySubject, setReplySubject] = useState('');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
     useEffect(() => {
+        // Request reply generation for both subject and body
         axios.post('http://localhost:8080/generate_reply', { body: email.body })
             .then(response => {
-                setReply(response.data.reply);
+                // Set the generated subject and body in the respective text fields
+                setReplySubject(response.data.subject);
+                setReplyBody(response.data.body);
                 setLoading(false);
             })
             .catch(error => {
@@ -24,8 +28,25 @@ function Reply() {
     }, [email.body]);
 
     const handleCopyClick = () => {
-        navigator.clipboard.writeText(reply);
+        navigator.clipboard.writeText(replyBody);
         alert('Reply copied to clipboard!');
+    };
+
+    const sendReply = () => {
+        const emailData = {
+            recipient: email.sender,
+            subject: replySubject,
+            body: replyBody,
+        };
+
+        axios.post('http://localhost:8080/send_email', emailData)
+            .then(response => {
+                alert(response.data.message);  // Show success message
+            })
+            .catch(error => {
+                console.error('Error sending email:', error);
+                alert('Failed to send email. Please try again later.');
+            });
     };
 
     return (
@@ -38,9 +59,6 @@ function Reply() {
                     <Typography variant="h6">
                         <strong>To:</strong> {email.sender}
                     </Typography>
-                    <Typography variant="subtitle1">
-                        <strong>Subject:</strong> {email.subject}
-                    </Typography>
                     <Typography variant="body1" paragraph>
                         <strong>Original Email:</strong>
                     </Typography>
@@ -48,7 +66,17 @@ function Reply() {
                         {email.body}
                     </Typography>
                     <Typography variant="body1" paragraph>
-                        <strong>Recommended Reply:</strong>
+                        <strong>Subject:</strong>
+                    </Typography>
+                    <TextField
+                        fullWidth
+                        variant="outlined"
+                        value={replySubject}
+                        onChange={(e) => setReplySubject(e.target.value)}
+                        sx={{ mb: 2 }}
+                    />
+                    <Typography variant="body1" paragraph>
+                        <strong>Reply:</strong>
                     </Typography>
                     {loading ? (
                         <Box display="flex" justifyContent="center" alignItems="center" mt={2}>
@@ -64,10 +92,8 @@ function Reply() {
                             rows={6}
                             fullWidth
                             variant="outlined"
-                            value={reply}
-                            InputProps={{
-                                readOnly: true,
-                            }}
+                            value={replyBody}
+                            onChange={(e) => setReplyBody(e.target.value)}
                         />
                     )}
                     <Box mt={2} display="flex" justifyContent="space-between">
@@ -75,9 +101,17 @@ function Reply() {
                             variant="contained"
                             color="primary"
                             onClick={handleCopyClick}
-                            disabled={!reply}
+                            disabled={!replyBody}
                         >
                             Copy Reply
+                        </Button>
+                        <Button
+                            variant="contained"
+                            color="secondary"
+                            onClick={sendReply}
+                            disabled={!replyBody || !replySubject}
+                        >
+                            Send Email
                         </Button>
                     </Box>
                 </CardContent>
