@@ -16,6 +16,20 @@ from datetime import datetime, timezone
 from models import db, Email, DeletedEmail
 from dotenv import load_dotenv
 
+
+from flask import Flask, send_from_directory
+
+app = Flask(__name__, static_folder='static')
+
+@app.route('/')
+def serve():
+    return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/<path:path>')
+def serve_other(path):
+    return send_from_directory(app.static_folder, 'index.html')
+
+
 # Load environment variables from .env file
 load_dotenv()
 
