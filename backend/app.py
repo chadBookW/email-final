@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 import google.generativeai as genai
@@ -16,39 +16,14 @@ from datetime import datetime, timezone
 from models import db, Email, DeletedEmail
 from dotenv import load_dotenv
 
-
-from flask import Flask, send_from_directory
-
-app = Flask(__name__, static_folder='static')
-
-if 'DATABASE_URL' in os.environ:
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ['DATABASE_URL']
-else:
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///your-local-database.db'
-
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False  # Optional: to disable modification tracking
-
-db = SQLAlchemy(app)
-
-@app.route('/')
-def serve():
-    return send_from_directory(app.static_folder, 'index.html')
-
-@app.route('/<path:path>')
-def serve_other(path):
-    return send_from_directory(app.static_folder, 'index.html')
-
-
 # Load environment variables from .env file
 load_dotenv()
 
-# Configuration
-GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
-genai.configure(api_key=GOOGLE_API_KEY)
-
 # Initialize Flask app
-app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI')
+app = Flask(__name__, static_folder='static')
+
+# Configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI', 'sqlite:///your-local-database.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
@@ -60,7 +35,9 @@ nltk.download('punkt')
 nlp = spacy.load('en_core_web_sm')
 sentiment_analyzer = SentimentIntensityAnalyzer()
 
-# Gmail API setup
+# Google API setup
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+genai.configure(api_key=GOOGLE_API_KEY)
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send']
 
 creds = None
@@ -86,6 +63,7 @@ try:
 except Exception as e:
     logging.error(f"Failed to create Gmail service: {e}")
     service = None
+
 
 # Fetch emails
 def fetch_emails():
