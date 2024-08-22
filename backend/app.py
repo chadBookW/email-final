@@ -12,16 +12,20 @@ import spacy
 import logging
 import os
 import base64
-from datetime import datetime
-from models import db, Email,DeletedEmail
+from datetime import datetime, timezone
+from models import db, Email, DeletedEmail
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configuration
-GOOGLE_API_KEY = 'AIzaSyCizxQ6wLglJdjErZ5jw1pTiCEj4B9JRP4'
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 genai.configure(api_key=GOOGLE_API_KEY)
 
 # Initialize Flask app
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///emails.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
@@ -60,14 +64,7 @@ except Exception as e:
     logging.error(f"Failed to create Gmail service: {e}")
     service = None
 
-from datetime import datetime
-
-from datetime import datetime
-import logging
-import base64
-
-from datetime import datetime, timezone
-
+# Fetch emails
 def fetch_emails():
     emails = []
     next_page_token = None
@@ -159,13 +156,7 @@ def fetch_emails():
     
     return emails
 
-
-
-
-
-
-
-
+# Analyze email
 def analyze_email(email):
     try:
         doc = nlp(email.body)
@@ -219,16 +210,24 @@ def get_email(email_id):
 def delete_emails():
     email_ids = request.json.get('email_ids', [])
     try:
+        if not email_ids:
+            return jsonify({'status': 'error', 'message': 'No email IDs provided'}), 400
+
         for email_id in email_ids:
-            email = Email.query.get(email_id)
+            email = db.session.get(Email, email_id)
             if email:
+                logging.info(f"Deleting email with ID: {email_id}")
                 db.session.delete(email)
+                deleted_email = DeletedEmail(id=email_id)
+                db.session.add(deleted_email)  # Optionally add to DeletedEmail table if you want to keep track of deleted emails
+            else:
+                logging.warning(f"Email with ID {email_id} not found.")
+        
         db.session.commit()
         return jsonify({'status': 'success', 'message': 'Emails deleted successfully'})
     except Exception as e:
         logging.error(f"Error deleting emails: {e}")
         return jsonify({'status': 'error', 'message': f'Failed to delete emails: {str(e)}'}), 500
-
 
 @app.route('/generate_reply', methods=['POST'])
 def generate_reply():
@@ -255,32 +254,28 @@ def generate_reply():
     except Exception as e:
         return jsonify({'error': f'An error occurred: {str(e)}'}), 500
 
-
 @app.route('/send_email', methods=['POST'])
 def send_email():
     try:
-        email_data = request.json
-        recipient = email_data['recipient']
-        subject = email_data['subject']
-        body_text = email_data['body']
+        sender = request.json.get('sender')
+        to = request.json.get('to')
+        subject = request.json.get('subject')
+        body = request.json.get('body')
 
-        # Create the email message
-        message = f"To: {recipient}\r\nSubject: {subject}\r\n\r\n{body_text}"
+        # Compose the email
+        message = (f"From: {sender}\r\n"
+                   f"To: {to}\r\n"
+                   f"Subject: {subject}\r\n\r\n"
+                   f"{body}")
+
         encoded_message = base64.urlsafe_b64encode(message.encode("utf-8")).decode("utf-8")
-
-        # Create the message payload
-        send_message = {
-            'raw': encoded_message
-        }
+        create_message = {'raw': encoded_message}
 
         # Send the email
-        service.users().messages().send(userId='me', body=send_message).execute()
-
-        return jsonify({'status': 'success', 'message': 'Email sent successfully!'})
+        send_message = service.users().messages().send(userId="me", body=create_message).execute()
+        return jsonify({'status': 'success', 'message': 'Email sent successfully', 'message_id': send_message['id']})
     except Exception as e:
-        logging.error(f"Error sending email: {e}")
         return jsonify({'status': 'error', 'message': f'Failed to send email: {str(e)}'}), 500
-
 
 if __name__ == '__main__':
     with app.app_context():
