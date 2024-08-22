@@ -21,6 +21,15 @@ from flask import Flask, send_from_directory
 
 app = Flask(__name__, static_folder='static')
 
+if 'DATABASE_URL' in os.environ:
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ['DATABASE_URL']
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///your-local-database.db'
+
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False  # Optional: to disable modification tracking
+
+db = SQLAlchemy(app)
+
 @app.route('/')
 def serve():
     return send_from_directory(app.static_folder, 'index.html')
