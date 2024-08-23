@@ -50,7 +50,17 @@ def load_credentials():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file('backend/credentials.json', SCOPES)
+            flow = InstalledAppFlow.from_client_config({
+                "web": {
+                    "client_id": os.getenv('GOOGLE_CLIENT_ID'),
+                    "project_id": os.getenv('GOOGLE_PROJECT_ID'),
+                    "auth_uri": os.getenv('GOOGLE_AUTH_URI'),
+                    "token_uri": os.getenv('GOOGLE_TOKEN_URI'),
+                    "auth_provider_x509_cert_url": os.getenv('GOOGLE_AUTH_PROVIDER_X509_CERT_URL'),
+                    "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
+                    "redirect_uris": [os.getenv('GOOGLE_REDIRECT_URI')]
+                }
+            }, SCOPES)
             creds = flow.run_local_server(port=8080)
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
@@ -63,7 +73,6 @@ try:
 except Exception as e:
     logging.error(f"Failed to create Gmail service: {e}")
     service = None
-
 
 # Fetch emails
 def fetch_emails():
@@ -242,43 +251,21 @@ def generate_reply():
         # Assume response contains two parts: a subject and a body
         subject, body = response.text.split("\n", 1)  # Assuming LLM generates the subject on the first line
         
-        # Remove unwanted prefixes (e.g., '## Subject: Re:')
-        if subject.lower().startswith("## subject: re:"):
-            subject = subject[15:].strip()
-        elif subject.lower().startswith("## subject:"):
-            subject = subject[11:].strip()
+        # Remove unwanted prefixes like 'Subject:'
+        if subject.lower().startswith("subject:"):
+            subject = subject[len("subject:"):].strip()
 
         return jsonify({
             'subject': subject.strip(),
             'body': body.strip()
         })
     except Exception as e:
-        return jsonify({'error': f'An error occurred: {str(e)}'}), 500
+        logging.error(f"Error generating reply: {e}")
+        return jsonify({'status': 'error', 'message': 'Failed to generate reply'}), 500
 
-@app.route('/send_email', methods=['POST'])
-def send_email():
-    try:
-        sender = request.json.get('sender')
-        to = request.json.get('to')
-        subject = request.json.get('subject')
-        body = request.json.get('body')
-
-        # Compose the email
-        message = (f"From: {sender}\r\n"
-                   f"To: {to}\r\n"
-                   f"Subject: {subject}\r\n\r\n"
-                   f"{body}")
-
-        encoded_message = base64.urlsafe_b64encode(message.encode("utf-8")).decode("utf-8")
-        create_message = {'raw': encoded_message}
-
-        # Send the email
-        send_message = service.users().messages().send(userId="me", body=create_message).execute()
-        return jsonify({'status': 'success', 'message': 'Email sent successfully', 'message_id': send_message['id']})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': f'Failed to send email: {str(e)}'}), 500
+@app.route('/uploads/<filename>')
+def download_file(filename):
+    return send_from_directory('static/uploads', filename)
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()  # Ensure tables are created
-    app.run(debug=True, port=8080)
+    app.run(port=8080)
