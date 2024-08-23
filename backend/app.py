@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, redirect, url_for
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 import google.generativeai as genai
@@ -58,7 +58,7 @@ def load_credentials():
                     "token_uri": os.getenv('GOOGLE_TOKEN_URI'),
                     "auth_provider_x509_cert_url": os.getenv('GOOGLE_AUTH_PROVIDER_X509_CERT_URL'),
                     "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
-                    "redirect_uris": [os.getenv('GOOGLE_REDIRECT_URI')]
+                    "redirect_uris": [url_for('oauth2callback', _external=True)]
                 }
             }, SCOPES)
             creds = flow.run_local_server(port=8080)
@@ -267,5 +267,29 @@ def generate_reply():
 def download_file(filename):
     return send_from_directory('static/uploads', filename)
 
+@app.route('/oauth2callback')
+def oauth2callback():
+    flow = InstalledAppFlow.from_client_config({
+        "web": {
+            "client_id": os.getenv('GOOGLE_CLIENT_ID'),
+            "project_id": os.getenv('GOOGLE_PROJECT_ID'),
+            "auth_uri": os.getenv('GOOGLE_AUTH_URI'),
+            "token_uri": os.getenv('GOOGLE_TOKEN_URI'),
+            "auth_provider_x509_cert_url": os.getenv('GOOGLE_AUTH_PROVIDER_X509_CERT_URL'),
+            "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
+            "redirect_uris": [url_for('oauth2callback', _external=True)]
+        }
+    }, SCOPES)
+    
+    authorization_response = request.url
+    flow.fetch_token(authorization_response=authorization_response)
+    creds = flow.credentials
+
+    # Save credentials to environment-specific storage
+    with open('token.json', 'w') as token:
+        token.write(creds.to_json())
+
+    return redirect(url_for('index'))
+
 if __name__ == '__main__':
-    app.run(port=8080)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
