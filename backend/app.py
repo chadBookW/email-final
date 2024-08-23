@@ -249,8 +249,12 @@ def generate_reply():
         response = model.generate_content(prompt)
 
         # Assume response contains two parts: a subject and a body
-        subject, body = response.text.split("\n", 1)  # Assuming LLM generates the subject on the first line
-        
+        response_text = response.text
+        if "\n" in response_text:
+            subject, body = response_text.split("\n", 1)
+        else:
+            subject, body = "Re:", response_text  # Handle cases with no clear subject
+
         # Remove unwanted prefixes like 'Subject:'
         if subject.lower().startswith("subject:"):
             subject = subject[len("subject:"):].strip()
