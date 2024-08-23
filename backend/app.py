@@ -21,6 +21,8 @@ load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__, static_folder='static')
+app.config['SERVER_NAME'] = 'nipunemail123.herokuapp.com'
+app.config['APPLICATION_ROOT'] = '/'
 
 # Configuration
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI', 'sqlite:///your-local-database.db')
