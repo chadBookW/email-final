@@ -43,6 +43,8 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googlea
 creds = None
 
 def load_credentials():
+
+    redirect_uri = os.getenv('OAUTH2_REDIRECT_URI', 'https://yourapp.herokuapp.com/oauth2callback')
     global creds
     with app.app_context():  # Ensure the context is available
         if os.path.exists('token.json'):
@@ -59,7 +61,7 @@ def load_credentials():
                         "token_uri": os.getenv('GOOGLE_TOKEN_URI'),
                         "auth_provider_x509_cert_url": os.getenv('GOOGLE_AUTH_PROVIDER_X509_CERT_URL'),
                         "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
-                        "redirect_uris": [url_for('oauth2callback', _external=True)]
+                        "redirect_uris": [redirect_uri]
                     }
                 }, SCOPES)
                 creds = flow.run_local_server(port=8080)
