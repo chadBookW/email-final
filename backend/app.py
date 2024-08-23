@@ -40,16 +40,21 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 genai.configure(api_key=GOOGLE_API_KEY)
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send']
 
-creds = None
-
 def load_credentials():
     global creds
+    creds = None
+
+    # Load credentials from 'token.json' if it exists
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+
+    # If no valid credentials are found, start the authorization flow
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
+            # Attempt to refresh the token if it's expired
             creds.refresh(Request())
         else:
+            # Use environment variables to configure the OAuth flow
             flow = InstalledAppFlow.from_client_config({
                 "web": {
                     "client_id": os.getenv('GOOGLE_CLIENT_ID'),
@@ -61,7 +66,11 @@ def load_credentials():
                     "redirect_uris": [os.getenv('GOOGLE_REDIRECT_URI')]
                 }
             }, SCOPES)
+
+            # Run local server for user authentication
             creds = flow.run_local_server(port=8080)
+
+        # Save the credentials to 'token.json'
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
 
