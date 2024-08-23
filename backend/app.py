@@ -40,39 +40,25 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 genai.configure(api_key=GOOGLE_API_KEY)
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send']
 
+creds = None
+
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+
 def load_credentials():
-    global creds
-    creds = None
+    try:
+        creds = flow.run_local_server(port=8080)
+        # Add additional code to handle the credentials if necessary
+    except AttributeError as e:
+        logging.error("Failed to retrieve URI. Make sure all OAuth configurations are set correctly.")
+        logging.error(f"Error: {str(e)}")
+        raise e
 
-    # Load credentials from 'token.json' if it exists
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+if __name__ == "__main__":
+    load_credentials()
 
-    # If no valid credentials are found, start the authorization flow
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            # Attempt to refresh the token if it's expired
-            creds.refresh(Request())
-        else:
-            # Use environment variables to configure the OAuth flow
-            flow = InstalledAppFlow.from_client_config({
-                "web": {
-                    "client_id": os.getenv('GOOGLE_CLIENT_ID'),
-                    "project_id": os.getenv('GOOGLE_PROJECT_ID'),
-                    "auth_uri": os.getenv('GOOGLE_AUTH_URI'),
-                    "token_uri": os.getenv('GOOGLE_TOKEN_URI'),
-                    "auth_provider_x509_cert_url": os.getenv('GOOGLE_AUTH_PROVIDER_X509_CERT_URL'),
-                    "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
-                    "redirect_uris": [os.getenv('GOOGLE_REDIRECT_URI')]
-                }
-            }, SCOPES)
-
-            # Run local server for user authentication
-            creds = flow.run_local_server(port=8080)
-
-        # Save the credentials to 'token.json'
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
 
 load_credentials()
 
