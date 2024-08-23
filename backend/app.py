@@ -46,7 +46,7 @@ creds = None
 
 def load_credentials():
 
-    redirect_uri = os.getenv('OAUTH2_REDIRECT_URI', 'https://yourapp.herokuapp.com/oauth2callback')
+    redirect_uri = os.getenv('OAUTH2_REDIRECT_URI', 'https://nipunemail123.herokuapp.com/oauth2callback')
     global creds
     with app.app_context():  # Ensure the context is available
         if os.path.exists('token.json'):
