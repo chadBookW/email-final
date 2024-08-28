@@ -123,7 +123,7 @@ python-dotenv==1.0.1
 pytz==2024.1
 PyYAML==6.0.1
 referencing==0.35.1
-regex==2024.7.24
+regex>=2023.10.3,<2024.0.0
 requests==2.32.3
 requests-oauthlib==2.0.0
 rfc3339-validator==0.1.4
