@@ -15,14 +15,13 @@ import base64
 from datetime import datetime, timezone
 from models import db, Email, DeletedEmail
 from dotenv import load_dotenv
+import threading
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__, static_folder='static')
-app.config['SERVER_NAME'] = 'nipunemail123.herokuapp.com'
-app.config['APPLICATION_ROOT'] = '/'
 
 # Configuration
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI', 'sqlite:///your-local-database.db')
@@ -45,30 +44,27 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googlea
 creds = None
 
 def load_credentials():
-
-    redirect_uri = os.getenv('OAUTH2_REDIRECT_URI', 'https://nipunemail123.herokuapp.com/oauth2callback')
     global creds
-    with app.app_context():  # Ensure the context is available
-        if os.path.exists('token.json'):
-            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_config({
-                    "web": {
-                        "client_id": os.getenv('GOOGLE_CLIENT_ID'),
-                        "project_id": os.getenv('GOOGLE_PROJECT_ID'),
-                        "auth_uri": os.getenv('GOOGLE_AUTH_URI'),
-                        "token_uri": os.getenv('GOOGLE_TOKEN_URI'),
-                        "auth_provider_x509_cert_url": os.getenv('GOOGLE_AUTH_PROVIDER_X509_CERT_URL'),
-                        "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
-                        "redirect_uris": [redirect_uri]
-                    }
-                }, SCOPES)
-                creds = flow.run_local_server(port=8080)
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_config({
+                "web": {
+                    "client_id": os.getenv('GOOGLE_CLIENT_ID'),
+                    "project_id": os.getenv('GOOGLE_PROJECT_ID'),
+                    "auth_uri": os.getenv('GOOGLE_AUTH_URI'),
+                    "token_uri": os.getenv('GOOGLE_TOKEN_URI'),
+                    "auth_provider_x509_cert_url": os.getenv('GOOGLE_AUTH_PROVIDER_X509_CERT_URL'),
+                    "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
+                    "redirect_uris": [url_for('oauth2callback', _external=True)]
+                }
+            }, SCOPES)
+            creds = flow.run_local_server(port=8080)
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
 
 load_credentials()
 
@@ -171,6 +167,11 @@ def fetch_emails():
     
     return emails
 
+# Async fetch emails
+def fetch_emails_async():
+    thread = threading.Thread(target=fetch_emails)
+    thread.start()
+
 # Analyze email
 def analyze_email(email):
     try:
@@ -208,10 +209,8 @@ def analyze_email(email):
 
 @app.route('/emails', methods=['GET'])
 def get_emails():
-    # Fetch latest emails and store them in the database
-    fetched_emails = fetch_emails()
-
-    # Analyze and return the emails sorted by date (newest first)
+    fetch_emails_async()  # Start fetching emails asynchronously
+    # Initially return empty response or previously cached data
     analyzed_emails = [analyze_email(email) for email in Email.query.order_by(Email.date.desc()).all()]
     return jsonify(analyzed_emails)
 
@@ -221,6 +220,14 @@ def get_email(email_id):
     analyzed_email = analyze_email(email)
     return jsonify(analyzed_email)
 
+# Database setup
+Session = scoped_session(sessionmaker(bind=db.engine))
+session = Session()
+
+from sqlalchemy.exc import IntegrityError
+
+from sqlalchemy.exc import IntegrityError
+
 @app.route('/emails/delete', methods=['POST'])
 def delete_emails():
     email_ids = request.json.get('email_ids', [])
@@ -229,19 +236,27 @@ def delete_emails():
             return jsonify({'status': 'error', 'message': 'No email IDs provided'}), 400
 
         for email_id in email_ids:
-            email = db.session.get(Email, email_id)
-            if email:
-                logging.info(f"Deleting email with ID: {email_id}")
-                db.session.delete(email)
-                deleted_email = DeletedEmail(id=email_id)
-                db.session.add(deleted_email)  # Optionally add to DeletedEmail table if you want to keep track of deleted emails
+            # Check if the email ID already exists in the DeletedEmail table
+            deleted_email = DeletedEmail.query.filter_by(id=email_id).first()
+            if deleted_email is None:
+                # If not found, proceed to delete from Email and add to DeletedEmail
+                email = Email.query.get(email_id)
+                if email:
+                    db.session.delete(email)
+                    new_deleted_email = DeletedEmail(id=email_id)
+                    db.session.add(new_deleted_email)
             else:
-                logging.warning(f"Email with ID {email_id} not found.")
-        
+                logging.info(f"Email ID {email_id} already exists in DeletedEmail table.")
+
         db.session.commit()
         return jsonify({'status': 'success', 'message': 'Emails deleted successfully'})
+    except IntegrityError as e:
+        logging.error(f"IntegrityError deleting emails: {e}")
+        db.session.rollback()
+        return jsonify({'status': 'error', 'message': 'Failed to delete emails due to a database integrity error.'}), 500
     except Exception as e:
         logging.error(f"Error deleting emails: {e}")
+        db.session.rollback()
         return jsonify({'status': 'error', 'message': f'Failed to delete emails: {str(e)}'}), 500
 
 @app.route('/generate_reply', methods=['POST'])
@@ -254,51 +269,24 @@ def generate_reply():
         response = model.generate_content(prompt)
 
         # Assume response contains two parts: a subject and a body
-        response_text = response.text
-        if "\n" in response_text:
-            subject, body = response_text.split("\n", 1)
-        else:
-            subject, body = "Re:", response_text  # Handle cases with no clear subject
-
-        # Remove unwanted prefixes like 'Subject:'
-        if subject.lower().startswith("subject:"):
-            subject = subject[len("subject:"):].strip()
+        subject, body = response.text.split('\n\n', 1)
 
         return jsonify({
-            'subject': subject.strip(),
-            'body': body.strip()
+            'subject': subject,
+            'body': body
         })
     except Exception as e:
         logging.error(f"Error generating reply: {e}")
-        return jsonify({'status': 'error', 'message': 'Failed to generate reply'}), 500
+        return jsonify({'status': 'error', 'message': f'Failed to generate reply: {str(e)}'}), 500
 
-@app.route('/uploads/<filename>')
-def download_file(filename):
-    return send_from_directory('static/uploads', filename)
+@app.route('/<path:filename>', methods=['GET'])
+def serve_static(filename):
+    return send_from_directory(app.static_folder, filename)
 
-@app.route('/oauth2callback')
-def oauth2callback():
-    flow = InstalledAppFlow.from_client_config({
-        "web": {
-            "client_id": os.getenv('GOOGLE_CLIENT_ID'),
-            "project_id": os.getenv('GOOGLE_PROJECT_ID'),
-            "auth_uri": os.getenv('GOOGLE_AUTH_URI'),
-            "token_uri": os.getenv('GOOGLE_TOKEN_URI'),
-            "auth_provider_x509_cert_url": os.getenv('GOOGLE_AUTH_PROVIDER_X509_CERT_URL'),
-            "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
-            "redirect_uris": [url_for('oauth2callback', _external=True)]
-        }
-    }, SCOPES)
+@app.route('/')
+def index():
+    return redirect(url_for('serve_static', filename='index.html'))
 
-    authorization_response = request.url
-    flow.fetch_token(authorization_response=authorization_response)
-    creds = flow.credentials
-
-    # Save credentials to environment-specific storage
-    with open('token.json', 'w') as token:
-        token.write(creds.to_json())
-
-    return redirect(url_for('index'))
-
+# Run Flask app
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+    app.run(debug=True)
