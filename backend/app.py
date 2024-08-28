@@ -41,9 +41,10 @@ genai.configure(api_key=GOOGLE_API_KEY)
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send']
 
 creds = None
+service = None
 
-def load_credentials():
-    global creds
+def setup_google_api():
+    global creds, service
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     if not creds or not creds.valid:
@@ -64,15 +65,16 @@ def load_credentials():
             creds = flow.run_local_server(port=8080)
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
+    
+    try:
+        service = build('gmail', 'v1', credentials=creds)
+    except Exception as e:
+        logging.error(f"Failed to create Gmail service: {e}")
+        service = None
 
-load_credentials()
-
-# Gmail API service
-try:
-    service = build('gmail', 'v1', credentials=creds)
-except Exception as e:
-    logging.error(f"Failed to create Gmail service: {e}")
-    service = None
+@app.before_first_request
+def initialize():
+    setup_google_api()
 
 # Fetch emails
 def fetch_emails():
