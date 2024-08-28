@@ -13,7 +13,7 @@ import logging
 import os
 import base64
 from datetime import datetime, timezone
-from models import db, Email, DeletedEmail
+from backend.models import db, Email, DeletedEmail
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
