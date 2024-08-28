@@ -1,0 +1,22 @@
+# Exclude virtual environment
+backend/venv/
+
+# Exclude cache files and compiled code
+backend/__pycache__/
+
+# Exclude Node.js dependencies (can be recreated by Heroku)
+frontend/node_modules/
+
+# Exclude local databases and other unnecessary files
+*.sqlite3
+
+# Exclude environment variables and log files
+*.env
+*.log
+
+# Exclude text files that are not needed for running the app
+*.txt
+*.md
+
+# Optionally exclude build artifacts in the frontend
+frontend/build/
