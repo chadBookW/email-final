@@ -1,0 +1,20 @@
+# Exclude virtual environment
+venv/
+*.pyc
+__pycache__/
+
+# Exclude development and build artifacts
+*.env
+*.git/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+
+# Exclude local databases and logs
+*.sqlite3
+*.log
+*.txt
+*.md
+
+# Exclude test files
+tests/
