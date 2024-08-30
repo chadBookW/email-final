@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, send_from_directory, redirect, url_for
+from flask import Flask, jsonify, request, send_from_directory, redirect, url_for, current_app
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 import google.generativeai as genai
@@ -59,7 +59,7 @@ def setup_google_api():
                     "token_uri": os.getenv('GOOGLE_TOKEN_URI'),
                     "auth_provider_x509_cert_url": os.getenv('GOOGLE_AUTH_PROVIDER_X509_CERT_URL'),
                     "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
-                    "redirect_uris": [url_for('oauth2callback', _external=True)]
+                    "redirect_uris": [get_redirect_uri()]
                 }
             }, SCOPES)
             creds = flow.run_local_server(port=8080)
@@ -71,6 +71,10 @@ def setup_google_api():
     except Exception as e:
         logging.error(f"Failed to create Gmail service: {e}")
         service = None
+
+def get_redirect_uri():
+    with app.app_context():
+        return url_for('oauth2callback', _external=True)
 
 # Fetch emails
 def fetch_emails():
@@ -246,29 +250,25 @@ def generate_reply():
         model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
 
-        # Assume response contains two parts: a subject and a body
-        reply_content = response.get("generated_text", "").split("\n\n")
-        reply_subject = reply_content[0] if len(reply_content) > 0 else "Re: Your email"
-        reply_body = reply_content[1] if len(reply_content) > 1 else "Thank you for your email. Here's my reply..."
+        # Process the response
+        reply_text = response.get('content', 'No reply generated')
+        subject = "Re: " + email_body.split('\n')[0]  # Simple subject generation, adjust as needed
 
-        return jsonify({
-            'subject': reply_subject,
-            'body': reply_body
-        })
+        return jsonify({'subject': subject, 'reply': reply_text})
     except Exception as e:
-        logging.error(f"Failed to generate reply: {e}")
+        logging.error(f"Error generating reply: {e}")
         return jsonify({'status': 'error', 'message': f'Failed to generate reply: {str(e)}'}), 500
 
-# OAuth callback route
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory(app.static_folder, filename)
+
 @app.route('/oauth2callback')
 def oauth2callback():
+    # Handle the OAuth callback here
     return redirect(url_for('get_emails'))
 
-@app.route('/static/<path:path>')
-def serve_static(path):
-    return send_from_directory(app.static_folder, path)
-
 if __name__ == '__main__':
-    with app.app_context():  # Ensure application context is available
+    with app.app_context():
         setup_google_api()
     app.run(debug=True)
