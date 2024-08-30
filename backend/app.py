@@ -247,34 +247,28 @@ def generate_reply():
         response = model.generate_content(prompt)
 
         # Assume response contains two parts: a subject and a body
-        subject, body = response.split('\n\n', 1)
-        return jsonify({'subject': subject, 'body': body})
+        reply_content = response.get("generated_text", "").split("\n\n")
+        reply_subject = reply_content[0] if len(reply_content) > 0 else "Re: Your email"
+        reply_body = reply_content[1] if len(reply_content) > 1 else "Thank you for your email. Here's my reply..."
+
+        return jsonify({
+            'subject': reply_subject,
+            'body': reply_body
+        })
     except Exception as e:
-        logging.error(f"Error generating reply: {e}")
+        logging.error(f"Failed to generate reply: {e}")
         return jsonify({'status': 'error', 'message': f'Failed to generate reply: {str(e)}'}), 500
 
-@app.route('/sentiment/<email_id>', methods=['GET'])
-def get_sentiment(email_id):
-    email = Email.query.get_or_404(email_id)
-    sentiment = {
-        'positive': email.sentiment_pos,
-        'negative': email.sentiment_neg,
-        'neutral': email.sentiment_neu
-    }
-    return jsonify(sentiment)
+# OAuth callback route
+@app.route('/oauth2callback')
+def oauth2callback():
+    return redirect(url_for('get_emails'))
 
-@app.route('/static/<path:path>', methods=['GET'])
+@app.route('/static/<path:path>')
 def serve_static(path):
     return send_from_directory(app.static_folder, path)
 
-@app.errorhandler(404)
-def page_not_found(e):
-    return jsonify({'error': 'Page not found'}), 404
-
-@app.errorhandler(500)
-def internal_server_error(e):
-    return jsonify({'error': 'Internal server error'}), 500
-
 if __name__ == '__main__':
-    setup_google_api()
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+    with app.app_context():  # Ensure application context is available
+        setup_google_api()
+    app.run(debug=True)
