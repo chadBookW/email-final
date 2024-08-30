@@ -72,10 +72,6 @@ def setup_google_api():
         logging.error(f"Failed to create Gmail service: {e}")
         service = None
 
-@app.before_first_request
-def initialize():
-    setup_google_api()
-
 # Fetch emails
 def fetch_emails():
     emails = []
@@ -251,47 +247,34 @@ def generate_reply():
         response = model.generate_content(prompt)
 
         # Assume response contains two parts: a subject and a body
-        subject, body = response.text.split("\n", 1)  # Assuming LLM generates the subject on the first line
-        
-        # Remove unwanted prefixes like 'Subject:'
-        if subject.lower().startswith("subject:"):
-            subject = subject[len("subject:"):].strip()
-
-        return jsonify({
-            'subject': subject.strip(),
-            'body': body.strip()
-        })
+        subject, body = response.split('\n\n', 1)
+        return jsonify({'subject': subject, 'body': body})
     except Exception as e:
         logging.error(f"Error generating reply: {e}")
-        return jsonify({'status': 'error', 'message': 'Failed to generate reply'}), 500
+        return jsonify({'status': 'error', 'message': f'Failed to generate reply: {str(e)}'}), 500
 
-@app.route('/uploads/<filename>')
-def download_file(filename):
-    return send_from_directory('static/uploads', filename)
+@app.route('/sentiment/<email_id>', methods=['GET'])
+def get_sentiment(email_id):
+    email = Email.query.get_or_404(email_id)
+    sentiment = {
+        'positive': email.sentiment_pos,
+        'negative': email.sentiment_neg,
+        'neutral': email.sentiment_neu
+    }
+    return jsonify(sentiment)
 
-@app.route('/oauth2callback')
-def oauth2callback():
-    flow = InstalledAppFlow.from_client_config({
-        "web": {
-            "client_id": os.getenv('GOOGLE_CLIENT_ID'),
-            "project_id": os.getenv('GOOGLE_PROJECT_ID'),
-            "auth_uri": os.getenv('GOOGLE_AUTH_URI'),
-            "token_uri": os.getenv('GOOGLE_TOKEN_URI'),
-            "auth_provider_x509_cert_url": os.getenv('GOOGLE_AUTH_PROVIDER_X509_CERT_URL'),
-            "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
-            "redirect_uris": [url_for('oauth2callback', _external=True)]
-        }
-    }, SCOPES)
-    
-    authorization_response = request.url
-    flow.fetch_token(authorization_response=authorization_response)
-    creds = flow.credentials
+@app.route('/static/<path:path>', methods=['GET'])
+def serve_static(path):
+    return send_from_directory(app.static_folder, path)
 
-    # Save credentials to environment-specific storage
-    with open('token.json', 'w') as token:
-        token.write(creds.to_json())
+@app.errorhandler(404)
+def page_not_found(e):
+    return jsonify({'error': 'Page not found'}), 404
 
-    return redirect(url_for('index'))
+@app.errorhandler(500)
+def internal_server_error(e):
+    return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
+    setup_google_api()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
