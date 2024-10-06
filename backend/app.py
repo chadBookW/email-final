@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, send_from_directory, redirect, url_for, current_app
+from flask import Flask, jsonify, request, send_from_directory, redirect, url_for
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 import google.generativeai as genai
@@ -41,10 +41,9 @@ genai.configure(api_key=GOOGLE_API_KEY)
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send']
 
 creds = None
-service = None
 
-def setup_google_api():
-    global creds, service
+def load_credentials():
+    global creds
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     if not creds or not creds.valid:
@@ -59,22 +58,21 @@ def setup_google_api():
                     "token_uri": os.getenv('GOOGLE_TOKEN_URI'),
                     "auth_provider_x509_cert_url": os.getenv('GOOGLE_AUTH_PROVIDER_X509_CERT_URL'),
                     "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
-                    "redirect_uris": [get_redirect_uri()]
+                    "redirect_uris": [url_for('oauth2callback', _external=True)]
                 }
             }, SCOPES)
             creds = flow.run_local_server(port=8080)
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
-    
-    try:
-        service = build('gmail', 'v1', credentials=creds)
-    except Exception as e:
-        logging.error(f"Failed to create Gmail service: {e}")
-        service = None
 
-def get_redirect_uri():
-    with app.app_context():
-        return url_for('oauth2callback', _external=True)
+load_credentials()
+
+# Gmail API service
+try:
+    service = build('gmail', 'v1', credentials=creds)
+except Exception as e:
+    logging.error(f"Failed to create Gmail service: {e}")
+    service = None
 
 # Fetch emails
 def fetch_emails():
@@ -169,18 +167,69 @@ def fetch_emails():
     return emails
 
 # Analyze email
+from nltk.corpus import wordnet as wn
+
+# Predefined categories and associated keywords
+categories = {
+    'work': ['project', 'deadline', 'meeting', 'report', 'client'],
+    'finance': ['invoice', 'payment', 'salary', 'expense', 'billing'],
+    'personal': ['party', 'dinner', 'vacation', 'family', 'birthday'],
+    # Add more categories and keywords as needed
+}
+
+def extract_keywords(email_body):
+    """
+    Extract relevant keywords and categorize the email as work or personal.
+    """
+    # Load the NLP model and process the email body
+    doc = nlp(email_body)
+
+    # Extract company names using Named Entity Recognition (NER)
+    company_names = [ent.text for ent in doc.ents if ent.label_ == 'ORG']
+    print(f"Extracted Company Names: {company_names}")  # Debugging line
+
+    # Define keywords related to requests
+    request_keywords = ['availability', 'pricing', 'quote', 'features', 'datasheet', 'support', 'warranty']
+    
+    # Extract relevant requests by looking for these keywords in the text
+    requests = [token.text for token in doc if token.lemma_.lower() in request_keywords]
+    print(f"Extracted Requests: {requests}")  # Debugging line
+
+    # Use sets to ensure uniqueness
+    company_names = list(set(company_names))
+    requests = list(set(requests))
+
+    # Combine the company names and requests as keywords
+    keywords = company_names + requests
+    print(f"Combined Keywords: {keywords}")  # Debugging line
+
+    # Classify email as work or personal based on content
+    work_related_keywords = ['project', 'team', 'meeting', 'deadline', 'report', 'procurement', 'contract']
+    personal_related_keywords = ['family', 'friend', 'party', 'holiday', 'gift', 'reunion']
+
+    # Check if any of the work or personal keywords are present in the email
+    email_text = email_body.lower()
+    is_work = any(keyword in email_text for keyword in work_related_keywords)
+    is_personal = any(keyword in email_text for keyword in personal_related_keywords)
+
+    category = 'work' if is_work else 'personal' if is_personal else 'unknown'
+    
+    return {
+        'keywords': ','.join(keywords),
+        'category': category
+    }
+
+
+
 def analyze_email(email):
     try:
-        doc = nlp(email.body)
+        # Extract sentiment
         sentiment = sentiment_analyzer.polarity_scores(email.body)
-        keywords = [token.text for token in doc if not token.is_stop and not token.is_punct][:3]
 
-        # Update sentiment and keywords in the database
-        email.sentiment_pos = sentiment['pos']
-        email.sentiment_neg = sentiment['neg']
-        email.sentiment_neu = sentiment['neu']
-        email.keywords = ','.join(keywords)
-        db.session.commit()
+        # Extract keywords and category from the email body
+        result = extract_keywords(email.body)
+        keywords = result['keywords']
+        category = result['category']
 
         return {
             'id': email.id,
@@ -189,7 +238,8 @@ def analyze_email(email):
             'sender': email.sender,
             'body': email.body,
             'sentiment': sentiment,
-            'keywords': keywords
+            'keywords': keywords.split(','),
+            'category': category
         }
     except Exception as e:
         logging.error(f"Error analyzing email: {e}")
@@ -200,8 +250,11 @@ def analyze_email(email):
             'sender': email.sender,
             'body': email.body,
             'sentiment': {},
-            'keywords': []
+            'keywords': [],
+            'category': 'unknown'
         }
+
+
 
 @app.route('/emails', methods=['GET'])
 def get_emails():
@@ -250,25 +303,52 @@ def generate_reply():
         model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
 
-        # Process the response
-        reply_text = response.get('content', 'No reply generated')
-        subject = "Re: " + email_body.split('\n')[0]  # Simple subject generation, adjust as needed
+        # Assume response contains two parts: a subject and a body
+        response_text = response.text
+        if "\n" in response_text:
+            subject, body = response_text.split("\n", 1)
+        else:
+            subject, body = "Re:", response_text  # Handle cases with no clear subject
 
-        return jsonify({'subject': subject, 'reply': reply_text})
+        # Remove unwanted prefixes like 'Subject:'
+        if subject.lower().startswith("subject:"):
+            subject = subject[len("subject:"):].strip()
+
+        return jsonify({
+            'subject': subject.strip(),
+            'body': body.strip()
+        })
     except Exception as e:
         logging.error(f"Error generating reply: {e}")
-        return jsonify({'status': 'error', 'message': f'Failed to generate reply: {str(e)}'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to generate reply'}), 500
 
-@app.route('/static/<path:filename>')
-def serve_static(filename):
-    return send_from_directory(app.static_folder, filename)
+@app.route('/uploads/<filename>')
+def download_file(filename):
+    return send_from_directory('static/uploads', filename)
 
 @app.route('/oauth2callback')
 def oauth2callback():
-    # Handle the OAuth callback here
-    return redirect(url_for('get_emails'))
+    flow = InstalledAppFlow.from_client_config({
+        "web": {
+            "client_id": os.getenv('GOOGLE_CLIENT_ID'),
+            "project_id": os.getenv('GOOGLE_PROJECT_ID'),
+            "auth_uri": os.getenv('GOOGLE_AUTH_URI'),
+            "token_uri": os.getenv('GOOGLE_TOKEN_URI'),
+            "auth_provider_x509_cert_url": os.getenv('GOOGLE_AUTH_PROVIDER_X509_CERT_URL'),
+            "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
+            "redirect_uris": [url_for('oauth2callback', _external=True)]
+        }
+    }, SCOPES)
+    
+    authorization_response = request.url
+    flow.fetch_token(authorization_response=authorization_response)
+    creds = flow.credentials
+
+    # Save credentials to environment-specific storage
+    with open('token.json', 'w') as token:
+        token.write(creds.to_json())
+
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    with app.app_context():
-        setup_google_api()
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
